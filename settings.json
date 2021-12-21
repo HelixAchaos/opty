@@ -1,0 +1,9 @@
+{
+  "rules": "rules.txt",
+  "targets": "hitlist.txt",
+  "version": {
+    "supported": [3.10],
+    "strict_dependent": false
+  },
+  "lazy?": true
+}

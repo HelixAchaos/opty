@@ -1,0 +1,8 @@
+random.randint(0, len(some_list)) -> throw Exception("") and recommend Fix(...) => ...
+
+
+
+
+
+
+Soft warning: `_`'s ctx is Load()! that's unconventional

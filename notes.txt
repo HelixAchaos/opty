@@ -1,0 +1,28 @@
+add support for overloaded functions later. ex: dict.fromkeys (OverloadedName(definitions=[<typed_ast._ast3.FunctionDef object at 0x0000014DDFEE96C0>, <typed_ast._ast3.FunctionDef object at 0x0000014DDFEE9ED0>]))
+
+
+global, nonlocal
+globals(), locals()
+
+
+indexing (e.g. a, b = c; a: int, b: str, c: tuple[int, str]) needs to be supported. thus, tuple unpacking ain't possible
+rn, "a, *b = '1'" -> a: str, b: list[str] # not b: list[()]
+
+
+
+# _print(ast.parse("a, (b, c) = [1, [2,3]]"))
+# print(10, get_type(ast.parse("a, (b, c) = [1, [2,3]]").body[0].value, st))
+# _print(ast.parse("a, *b = '123'"))  # star tuple unpacking
+# print(10, get_type(ast.parse("a, *b = '123'").body[0].value, st))
+
+
+
+
+
+a = "foo"
+def f():
+    print(a)  # we ignore this
+    a = 3
+
+
+will not guarantee exec coverage! (may later add it. <- when added, consider the args: (source, GLOBALS, LOCALS)

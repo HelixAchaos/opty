@@ -1,0 +1,43 @@
+separator = '----'
+# inspect.getfullargspec(str.split).args
+Sequence = collections.abc.Sequence
+Callable = collections.abc.Callable
+Iterable = collections.abc.Iterable
+----
+random.randint(0, a) -> random.randrange(a + 1) => a:int
+a[random.randrange(b, c, d)] -> random.choice(a[b:c:d]) => a:Sequence,b:int,c:int,d:int
+[random.choice(a) for c in range(b)] -> random.choices(a, k=b) => a:Sequence,b:int,c:Any
+
+random.random() * a -> random.uniform(0, a) => a:float
+random.uniform(0, a) + b -> random.uniform(b, a+b) => a:float,b:float
+int(random.uniform(a, b)) -> random.randrange(a, b) => a:float,b:float
+random.randrange(a, b) * c -> random.randrange(a, b, c) => a:float,b:float,c:int
+random.randrange(a, b, c) * d -> random.randrange(a, b, c*d) => a:float,b:float,c:int,d:int
+
+# done after the usages of `random.randrange` to collapse `random.randrange(3 + 1)`
+random.randint(0, a) -> random.randrange(a + 1) => a:int
+
+
+
+# could also handle generator expressions like `(n for n in range(10))` -> `iter(range(10))`
+map(a.b, c) -> (d.b() for d in c) => a:Any,b:Callable,c:Iterable[a]
+map(a, b) -> (a(c) for c in b) => a:Callable,b:Iterable
+filter(a, b) -> (c for b if a(c)) => a:Callable,b:Sequence
+
+# Sequence(c for c in b if a(c)) -> [a(c) for b in c] => a:Callable,b:Sequence,c:Any
+# dicts not used because they too wacky.
+list(a) -> [a] => a:GeneratorExp
+set(a) -> {a} => a:GeneratorExp
+
+str(a) + 'b' -> f'{a}b' => a:Identifier,b:str
+f'a={a}' -> f'{a=}' => a:Identifier
+
+print(str(a)) -> print(a) => a:Any
+
+# a[b:len(a)] -> a[b:] => a:Sequence,b:int
+# a[0:b] -> a[:b] => a:Sequence,b:int
+# a[b:c:1] -> a[b:c] => a:Sequence,b:int
+# a[:len(b)
+
+# Immutable(a) -> a => a:Immutable // I would do this, but a) sometimes the code uses `is` and b) definining a type_short for Immutable would be a long project
+#    map(str, ["foo", "bar"])
