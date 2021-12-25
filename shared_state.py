@@ -32,7 +32,6 @@ from models import Scope
 
 
 
-modules = {}  # not used
 # global_state = State(typeshed_client.parser.get_stub_names('builtins'))
 builtin = Scope()
 

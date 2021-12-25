@@ -21,58 +21,16 @@ def _print(a):
     print(ast.dump(a, indent=4))
 
 
-class ErrorDuringImport(Exception):
-    """Errors that occurred while trying to import something to document it."""
-    def __init__(self, filename, exc_info):
-        self.filename = filename
-        self.exc, self.value, self.tb = exc_info
-
-    def __str__(self):
-        exc = self.exc.__name__
-        return f'problem in {self.filename} - {exc}: {self.value}'
-
-
-def get_full_name(name: str, state: Scope) -> str:
-    """
-    get_type('Iterator') == 'typing.Iterator'
-    :param name:
-    :param state:
-    :return:
-    """
-    name_info = state.load(name)  # TODO: FIX!!!
-
-    if name_info.is_exported:
-        return name
-    else:
-        if isinstance(name_info.ast, ImportedName):
-            return '.'.join(name_info.ast.module_name + (name,))
-        elif isinstance(name_info.ast, typed_ast._ast3.Assign):
-            # TODO: If generic relationships, bindings, etc. are wanted, look at `name_info.ast` (the Assign object)
-            return name_info.name
-
-
-def loc(name: str, state: dict) -> type:
-    if (l := locate(get_full_name(name, state))) is not None:
-        return l
-    elif isinstance(state[name].ast, typed_ast._ast3.Assign):
-        #  return TypeVar(name)
-        if get_full_name(state[name].ast.value.func.id, state) == "typing.TypeVar":
-            return TypeVar(state[name].ast.value.args[0].s)
-        else:
-            raise Exception
-    else:
-        raise Exception(f"{name=}")
-
-
-def ast_to_type(c, state: dict) -> type:  # | tuple[type]
+def ast_to_type(c: ast.AST, state: Scope) -> type:  # | tuple[type]
     if isinstance(c, typed_ast._ast3.Name):
-        return loc(c.id, state)
+        return state.load(c.id)
     elif isinstance(c, typed_ast._ast3.Subscript):
-        return loc(c.value.id, state)[ast_to_type(c.slice.value, state)]
+        return ast_to_type(c.value.id)[ast_to_type(c.slice.value, state)]
     elif isinstance(c, typed_ast._ast3.Tuple):
         return tuple(ast_to_type(elt, state) for elt in c.elts)
     elif isinstance(c, typed_ast._ast3.BinOp):
         return ast_to_type(c.left, state) | ast_to_type(c.right, state)
+    print(c)
 
 
 # def resolve_generic_attr(cls: type, attr: str) -> type: ...
@@ -174,7 +132,7 @@ def resolve_generic_func(cls: type, func_name: str, args: tuple[type] | tuple[()
         return fill_gen(ret)
 
 
-def resolve_generic_init(construct_class: type, args: tuple[type], state: dict) -> type:
+def resolve_generic_init(construct_class: type, args: tuple[type], state: Scope) -> type:
     """
     todo: when @overload is supported, depecrate this. replace with:
         `resolve_generic_func(construct_class, '__init__'|'__new__', args, state)
@@ -192,7 +150,7 @@ def resolve_generic_init(construct_class: type, args: tuple[type], state: dict) 
         # tuple(list[int | str]) -> we don't know if it's `tuple[int, str]` or whateva. lossy, so better to be general and right.
         if cls is get_args(args[0]):
             return construct_class
-        return cls[get_args(resolve_generic_func(args[0], '__iter__', (args[0],), global_state))]
+        return cls[get_args(resolve_generic_func(args[0], '__iter__', (args[0],), state))]
     elif issubclass(cls, dict):
         print(1, args[0])
         if issubclass(args[0], dict):
@@ -216,9 +174,9 @@ def resolve_generic_init(construct_class: type, args: tuple[type], state: dict) 
             return dict[Union[tuple(a)], Union[tuple(b)]]
         # return cls[get_args(resolve_generic_func(args[0], '__iter__', (args[0],), global_state))]
     elif issubclass(cls, enumerate):
-        return enumerate[get_args(resolve_generic_func(args[0], '__iter__', (args[0],), global_state))]
+        return enumerate[get_args(resolve_generic_func(args[0], '__iter__', (args[0],), state))]
     elif issubclass(cls, zip):
-        return zip[tuple(get_args(resolve_generic_func(a, '__iter__', (a,), global_state)) for a in args)]
+        return zip[tuple(get_args(resolve_generic_func(a, '__iter__', (a,), state)) for a in args)]
         # zip ain't tested
     else:
         raise NotImplementedError(f'{type(construct_class)=}')
@@ -346,7 +304,7 @@ tuple, dict, dictcomp, set, setcomp
 code = ast.parse("[b:=(a, 2) for a in '123']")
 _globals = Scope(meat=code, parent_scope=builtin)
 _globals._import('random')
-print(get_full_name('random', _globals))
+print(ast_to_type(_globals.load('random'), _globals))
 # print(9, code, globals)
 # print(globals.load('b'))
 

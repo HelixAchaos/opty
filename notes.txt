@@ -17,6 +17,7 @@ rn, "a, *b = '1'" -> a: str, b: list[str] # not b: list[()]
 
 
 
+doesn't care about sys.platform, sys.version, etc. bc typshed doesn't care.
 
 
 a = "foo"
