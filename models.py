@@ -1,7 +1,9 @@
 # Like a Linked List Stack.
 import ast
 import importlib
-from collections import deque
+import inspect
+import os
+from collections import deque, defaultdict
 from types import FunctionType
 from typing import Optional, Any
 from ast import Assign, AnnAssign, AugAssign, NamedExpr, NodeVisitor, AST, parse, Name, Tuple, Starred, ClassDef, FunctionDef, AsyncFunctionDef, DictComp, \
@@ -9,15 +11,16 @@ from ast import Assign, AnnAssign, AugAssign, NamedExpr, NodeVisitor, AST, parse
 
 from pathlib import Path
 
+import setuptools.errors
 import typed_ast
 import typeshed_client
 import typing
 from typeshed_client import NameInfo, ImportedName
 
-from errors import ErrorDuringImport
+from errors import ErrorDuringImport, TypeVarImmutabilityViolation
 
-modules = {}
 types = {}
+modules = {}
 
 
 class AssignSniffer(NodeVisitor):
@@ -191,56 +194,60 @@ NotFound = typing.TypeVar("NotFound")
 
 
 class TypeObject:
-    def __init__(self, name: str, bases: tuple[str]) -> None:
+    def __init__(self, name: Optional[str], bases: set[str]) -> None:
         self.name = name
         self.data = {}
-        self.bases: set[str] = set(bases)  # not dict because the bases' definitions may be dependent on self.
+        self.bases: set[str] = bases  # not dict because the bases' definitions may be dependent on self.
         types[self.name] = self
 
-    def __getitem__(self, item: str) -> typing.Union['TypeObject', 'BaseObject', '_Union']:
+    def __getitem__(self, item: str) -> typing.Union['TypeObject', 'BaseObject']:
         return self.data[item]
 
-    def __setitem__(self, key: str, value: typing.Union['TypeObject', 'BaseObject', '_Union']) -> None:
+    def __setitem__(self, key: str, value: typing.Union['TypeObject', 'BaseObject']) -> None:
         self.data[key] = value
 
-    def __lt__(self, superclass: typing.Union['TypeObject', '_Union']) -> bool:
+    def __lt__(self, superclass: 'TypeObject') -> bool:
         if isinstance(superclass, _Union):
             return any(self < arg for arg in superclass.args)
         elif isinstance(superclass, TypeObject):
             return any(types[base] < superclass for base in self.bases)
 
-    def __eq__(self, other: typing.Union['TypeObject', '_Union']) -> bool:
+    def __eq__(self, other: 'TypeObject') -> bool:
         if isinstance(other, _Union):
             return False
-        return self is other
+        if self is other:
+            return True
 
-    def __le__(self, other: typing.Union['TypeObject', '_Union']) -> bool:
+        return self.name == other.name  # would rather this not be relied on as types should be singletons.
+
+    def __le__(self, other: 'TypeObject') -> bool:
         return self == other or self < other
 
-    def __or__(self, other: typing.Union['TypeObject', '_Union']) -> typing.Union['TypeObject', '_Union']:
-        if isinstance(other, TypeObject):
+    def __or__(self, other: 'TypeObject') -> 'TypeObject':
+        if isinstance(other, _Union):
+            shared_names = self.data.keys() & other.data.keys()
+            data = {name: self[name] | other[name] for name in shared_names}
+            return _Union(self, other, data=data)
+        elif isinstance(other, TypeObject):
             if self == other:
                 return self
             else:
                 shared_names = self.data.keys() & other.data.keys()
                 data = {name: self[name] | other[name] for name in shared_names}
                 return _Union(self, other, data=data)
-        elif isinstance(other, _Union):
-            shared_names = self.data.keys() & other.data.keys()
-            data = {name: self[name] | other[name] for name in shared_names}
-            return _Union(self, other, data=data)
 
 
-def onion(args: tuple[TypeObject]) -> typing.Union[TypeObject, '_Union']:
+def onion(args: tuple[TypeObject]) -> TypeObject:
     if len(args) == 1:
         return args[0]
     else:
         return _Union(*args)
 
 
-class _Union:
+class _Union(TypeObject):
     def __init__(self, *args: TypeObject, data: Optional[dict] = None):
         self.args = args
+        super().__init__(name=None, bases=set.intersection(*(arg.bases for arg in self.args)))
 
         if data is None:
             names = set.intersection(*(set(arg.data.keys()) for arg in self.args))
@@ -254,43 +261,63 @@ class _Union:
         else:
             self.data = data
 
-
-    def __getitem__(self, item: str) -> typing.Union['TypeObject', 'BaseObject', '_Union']:
+    def __getitem__(self, item: str) -> typing.Union['TypeObject', 'BaseObject']:
         return self.data[item]
 
-    def __setitem__(self, key: str, value: typing.Union['TypeObject', 'BaseObject', '_Union']) -> None:
+    def __setitem__(self, key: str, value: typing.Union['TypeObject', 'BaseObject']) -> None:
         self.data[key] = value
 
-    def __lt__(self, superclass: typing.Union[TypeObject, '_Union']) -> bool:
+    def __lt__(self, superclass: TypeObject) -> bool:
         return all(arg < superclass for arg in self.args)
         # if isinstance(superclass, _Union):
         #     return all(arg < superclass for arg in self.args)
         # elif isinstance(superclass, TypeObject):
         #     return all(arg < superclass for arg in self.args)
 
-    def __eq__(self, other: typing.Union[TypeObject, '_Union']) -> bool:
+    def __eq__(self, other: TypeObject) -> bool:
         if isinstance(other, _Union):
             return False
         return self is other
 
-    def __le__(self, other: typing.Union[TypeObject, '_Union']) -> bool:
+    def __le__(self, other: TypeObject) -> bool:
         return self == other or self < other
 
-    def __or__(self, other: typing.Union[TypeObject, '_Union']) -> '_Union':
+    def __or__(self, other: TypeObject) -> '_Union':
         if self == other:
             return self
-        if isinstance(other, TypeObject):
+
+        if isinstance(other, _Union):
+            shared_names = self.data.keys() & other.data.keys()
+            data = {name: self[name] | other[name] for name in shared_names}
+            args = set(self.args) | set(other.args)  # make sure TypeObjects are unique as possible, by design
+            return _Union(*args, data=data)
+        elif isinstance(other, TypeObject):
             if other in self.args:
                 return self
             else:
                 shared_names = self.data.keys() & other.data.keys()
                 data = {name: self[name] | other[name] for name in shared_names}
                 return _Union(*self.args, other, data=data)
-        elif isinstance(other, _Union):
-            shared_names = self.data.keys() & other.data.keys()
-            data = {name: self[name] | other[name] for name in shared_names}
-            args = set(self.args) | set(other.args)  # make sure TypeObjects are unique as possible, by design
-            return _Union(*args, data=data)
+
+
+class TypeV(TypeObject):
+    def __init__(self, name: str, *constraints, bound=None, covariant: bool = False, contravariant: bool = False) -> None:
+        super().__init__(name, set())
+        # todo: consider handling covariants and contravariants? rn, only treated as free-variables.
+
+    def __setitem__(self, key, value):
+        raise TypeVarImmutabilityViolation(f"Attempted to assign ({value=}) to TypeVar({self.name})'s ({key=})")
+
+    def __getitem__(self, item):
+        raise TypeVarImmutabilityViolation(f"Attempted to access TypeVar({self.name})'s ({item=})")
+
+    def __eq__(self, other):
+        if isinstance(other, TypeV):
+            return self.name == other.name
+        return False
+
+    def __lt__(self, other):  # either == or !=. covariant, contravariant, etc. handling will change this, but not rn.
+        return False
 
 
 class BaseObject:
@@ -324,22 +351,78 @@ class Function(BaseObject):
         #        then return the return_type
 
 
+class Module(BaseObject):
+    def __init__(self, name: str) -> None:
+        super().__init__('types.ModuleType')
+        self.name = name
+        self.is_imported = False
+
+    def _import(self):
+        self.data = takein_module(self.name)
+        self.is_loaded = True
+
+    def __getitem__(self, item: str) -> TypeObject | BaseObject:
+        if not self.is_imported:
+            self._import()
+        return super().__getitem__(item)
+
+
+ts_base_path = Path(inspect.getfile(typeshed_client)).parent / 'typeshed'
+
+
+def is_mod(name: str) -> bool:
+    """
+    :param name:
+    :return: True if module. False if object inside module
+    """
+    names = name.split('.')
+    path = ts_base_path
+    for name in names:
+        path /= name
+        # assumes all directories have `__init__.py`
+        if not (os.path.exists(path) or os.path.exists(path.with_suffix('.pyi'))):
+            return False
+    return True
+
+
 def takein_module(module_nm: str) -> dict:
+    print(2, module_nm, modules)
     st = typeshed_client.parser.get_stub_names(module_nm)
+    result = {}
 
     def helper(node: ast.AST) -> dict:
         ...
 
+    imported_aliases = {}  # sure, they could do `collections.Counter = list` later on, but we assume the stubs are in good faith. this is necessary because
+    # they cause circular imports otherwise :sadgecry:
+
     for identifier, data in st.items():
         print(1, identifier, data)
-        if identifier in modules:
-            st[identifier] = modules[identifier]
         if isinstance(data.ast, ImportedName):
-            mod_nm, nm = data.ast.module_name, data.ast.name
-            print(mod_nm, nm)
+            # note that `a = email; from a import charset` is illegal. thus, the following way is totes valid.
+            mod_nm = '.'.join(data.ast.module_name)
+            if mod_nm in modules:  # cache
+                pass
+                # module = modules[mod_nm]
+            else:
+                module = Module(mod_nm)
+                modules[mod_nm] = module
+            # not storing in `result` bc of circular imports. also, importing an imported variable is just a code smell. if this later causes an issue,
+            # it'd be better to just write my own typeshed at that point. continue the `studs` project. ('studs' from 'stubs' but more pleasant to look at and
+            # handle)
+            if data.ast.name is None:
+                imported_aliases[data.ast.module_name[0]] = (mod_nm, '')
+            else:
+                if is_mod(new_nm := f'{mod_nm}.{data.ast.name}'):
+                    imported_aliases[data.ast.name] = (new_nm, '')
+                else:
+                    imported_aliases[data.ast.name] = (mod_nm, data.ast.name)
+
         elif isinstance(data.ast, typed_ast._ast3.Assign):
-            print(data.ast.__dict__)
-            exit(19)
+            print(3, data.ast.value.func.__dict__)
+            # exit(19)
+
+    print(f"{imported_aliases=}")
 
 
 # takein_module('email.charset')
