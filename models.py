@@ -338,17 +338,55 @@ class BaseObject:
     def typ(self) -> TypeObject:
         return types[self._typ]
 
+    def __eq__(self, other):
+        # doesn't care about type equality
+        return self.data == other.data
+
+
+class Literal(TypeObject):
+    def __init__(self, name: str, vals: tuple[BaseObject]) -> None:
+        super().__init__(name, set())
+        self.vals = vals
+        self._val_types: set[TypeObject] = {val.typ for val in self.vals}
+
+    def __lt__(self, other: TypeObject) -> bool:
+        if self == other:
+            return False
+
+        if isinstance(other, Literal):
+            o_vals = set(other.vals)
+            return all(val in o_vals for val in self.vals)
+        else:
+            return all(t <= other for t in self._val_types)  # type check
+
+    def __eq__(self, other: TypeObject) -> bool:
+        if isinstance(other, Literal):
+            if len(self.vals) != other.vals:
+                return False
+            return all(a._typ == b._typ and a == b for a, b in zip(self.vals, other.vals))
+        return False
+
+    def __le__(self, other: TypeObject) -> bool:
+        return self == other or self < other
+
 
 class Function(BaseObject):
-    def __init__(self, ast: ...):
+    def __init__(self, decorator_list: list[str], annotations: list[tuple[tuple[tuple[type], tuple[type], dict[str, type], dict[str, type]], type]]) -> None:
         super().__init__('types.FunctionType')
-        self.overloaded_funcs: list[dict[str, type]] = []
-        print(ast)
+        self.decorator_list = decorator_list
+        self.is_overloaded = 'overload' in self.decorator_list
+        #                 [   (     (      args         *args        kwargs           *kwargs        ), ret )]
+        self.annotations: list[tuple[tuple[tuple[type], tuple[type], dict[str, type], dict[str, type]], type]] = annotations  # is a list bc possibly overloaded
 
-    def returns(self, args: tuple = None, kwargs: dict = None):
-        raise NotImplementedError
-        # should handle overloaded functions. search through to see the most specific generics that match args,
-        #        then return the return_type
+    def returns(self, args: tuple = (), star_args: tuple = (), kwargs: dict = None, star_kwargs: dict = None):
+        kwargs = {} if kwargs is None else kwargs
+        star_kwargs = {} if kwargs is None else star_kwargs
+        if self.is_overloaded:
+            for ann_args, ann_ret in self.annotations:  # the more specific args_annotations should be first
+                if all(a < b for a, b in zip(ann_args, (args, star_args, kwargs, star_kwargs))):
+                    return ann_ret
+        else:
+            return self.annotations[0][1]
 
 
 class Module(BaseObject):
@@ -396,6 +434,9 @@ def takein_module(module_nm: str) -> dict:
     imported_aliases = {}  # sure, they could do `collections.Counter = list` later on, but we assume the stubs are in good faith. this is necessary because
     # they cause circular imports otherwise :sadgecry:
 
+
+    # no need to handle nested classes and functions. should only handle top-level classes, top-level functions, and functions inside classes. anything else
+    # is just smelly.
     for identifier, data in st.items():
         print(1, identifier, data)
         if isinstance(data.ast, ImportedName):
@@ -419,8 +460,9 @@ def takein_module(module_nm: str) -> dict:
                     imported_aliases[data.ast.name] = (mod_nm, data.ast.name)
 
         elif isinstance(data.ast, typed_ast._ast3.Assign):
-            print(3, data.ast.value.func.__dict__)
-            # exit(19)
+            ...
+        # print(3, data.ast.value.func.__dict__)
+        # exit(19)
 
     print(f"{imported_aliases=}")
 
