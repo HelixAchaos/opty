@@ -1,9 +1,11 @@
 # Like a Linked List Stack.
 import ast
+import dataclasses
 import importlib
 import inspect
 import os
 from collections import deque, defaultdict
+from copy import deepcopy
 from types import FunctionType
 from typing import Optional, Any
 from ast import Assign, AnnAssign, AugAssign, NamedExpr, NodeVisitor, AST, parse, Name, Tuple, Starred, ClassDef, FunctionDef, AsyncFunctionDef, DictComp, \
@@ -370,21 +372,123 @@ class Literal(TypeObject):
         return self == other or self < other
 
 
+@dataclasses.dataclass
+class arguments:
+    T = list[tuple[str, TypeObject]]
+    args: list[tuple[str, TypeObject]] = dataclasses.field(default_factory=list)
+    varargs: tuple[str, TypeObject] = dataclasses.field(default_factory=tuple)
+    kwonlyargs: list[tuple[str, TypeObject]] = dataclasses.field(default_factory=list)
+    kwonlydefaults: list[tuple[str, TypeObject]] = dataclasses.field(default_factory=list)
+    varkw: tuple[str, TypeObject] = dataclasses.field(default_factory=tuple)
+    defaults: list[tuple[str, TypeObject]] = dataclasses.field(default_factory=list)
+
+    def __init__(self, args: T, varargs: tuple[str, TypeObject], kwonlyargs: T, kwonlydefaults: T, varkw: tuple[str, TypeObject], defaults: T) -> None:
+        self.args = [] if args is None else args
+        self.varargs = () if args is None else varargs
+        self.kwonlyargs = [] if args is None else kwonlyargs
+        self.kwonlydefaults = [] if args is None else kwonlydefaults
+        self.varkw = () if args is None else varkw
+        self.defaults = [] if args is None else defaults
+
+    def __iter__(self):
+        for field in dataclasses.fields(self):
+            yield getattr(self, field.name)
+
+
 class Function(BaseObject):
-    def __init__(self, decorator_list: list[str], annotations: list[tuple[tuple[tuple[type], tuple[type], dict[str, type], dict[str, type]], type]]) -> None:
+    def __init__(self, decorator_list: list[str], annotations: list[tuple[arguments, TypeObject]]) -> None:
         super().__init__('types.FunctionType')
         self.decorator_list = decorator_list
         self.is_overloaded = 'overload' in self.decorator_list
-        #                 [   (     (      args         *args        kwargs           *kwargs        ), ret )]
-        self.annotations: list[tuple[tuple[tuple[type], tuple[type], dict[str, type], dict[str, type]], type]] = annotations  # is a list bc possibly overloaded
+        self.annotations: list[tuple[arguments, TypeObject]] = annotations  # is a list bc possibly overloaded
 
-    def returns(self, args: tuple = (), star_args: tuple = (), kwargs: dict = None, star_kwargs: dict = None):
-        kwargs = {} if kwargs is None else kwargs
-        star_kwargs = {} if kwargs is None else star_kwargs
+    def returns(self, argumes: tuple[TypeObject] = (), keygumes: dict[str, TypeObject] = None):
+        """inspect.getfullargspec(func)
+        Get the names and default values of a Python function’s arguments. A named tuple is returned:
+        FullArgSpec(args, varargs, varkw, defaults, kwonlyargs, kwonlydefaults,
+                    annotations)
+        - args is a list of the argument names.
+        - varargs and varkw are the names of the * and ** arguments or None
+        - defaults is an n-tuple of the default values of the last n arguments, or None if there are no default arguments.
+        - kwonlyargs is a list of keyword-only argument names.
+        - kwonlydefaults is a dictionary mapping names from kwonlyargs to defaults.
+        - annotations is a dictionary mapping argument names to annotations."""
+
+        """ at least some are: Optional[list]
+        {'args': [<typed_ast._ast3.arg obj],       # args
+        'vararg': <typed_ast._ast3.arg object>,    # varargs
+        'kwonlyargs': [],                          # kwonlyargs
+        'kw_defaults': [],                         # kwonlydefaults      # unnecessary for now
+        'kwarg': <typed_ast._ast3.arg object>,     # varkw
+        'defaults': []}                            # defaults            # unnecessary for now
+        """
+
+        """
+        >>> f = lambda func:inspect.getfullargspec(func)
+        >>> def g(a, b, *c, d, e=1, **f):...
+        >>> f(g)
+        FullArgSpec(args=['a', 'b'], varargs='c', varkw='f', defaults=None, kwonlyargs=['d', 'e'], kwonlydefaults={'e': 1}, annotations={})
+        >>> def h(a=3):...
+        >>> f(h)
+        FullArgSpec(args=['a'], varargs=None, varkw=None, defaults=(3,), kwonlyargs=[], kwonlydefaults=None, annotations={})
+        """
+        keygumes = {} if keygumes is None else keygumes
+
         if self.is_overloaded:
-            for ann_args, ann_ret in self.annotations:  # the more specific args_annotations should be first
-                if all(a < b for a, b in zip(ann_args, (args, star_args, kwargs, star_kwargs))):
-                    return ann_ret
+            for overloaded_func_candidate in self.annotations:  # the more specific args_annotations should be first
+                failed = False
+                (args, varargs, kwonlyargs, kwonlydefaults, varkw, defaults), ann_ret = overloaded_func_candidate
+                a_iter = iter(argumes)
+                args = iter(args)
+                for a, b in zip(a_iter, args):
+                    if a != b:
+                        failed = True
+                        break
+                if failed:
+                    continue
+                args = list(args)
+                if len(args) > 0:
+                    if any(varargs[0][1] != t for t in args):
+                        continue
+
+                k_iter = iter(keygumes)
+                kwargs = kwargs.items()
+
+
+
+
+
+                b = next(varargs)
+                for a in a_iter:
+                    if a != b:
+                        failed = True
+                        break
+                if failed:
+                    continue
+
+                k_iter = iter(keywords)
+                # kwonlyargs
+                for a, b in zip(k_iter, next(ann_argumes)):
+                    if a != b:
+                        failed = True
+                        break
+                if failed:
+                    continue
+                # varkw
+                for a, b in zip(k_iter, next(ann_argumes)):
+                    if a != b:
+                        failed = True
+                        break
+                if failed:
+                    continue
+
+
+                return ann_ret
+
+            if len(self.annotations) == 0:
+                return Exception(f"Overloaded function has an empty `annotations` field ")
+            else:
+                return Exception(f"args/kwargs don't match any overloaded annotations")
         else:
             return self.annotations[0][1]
 
@@ -431,14 +535,19 @@ def takein_module(module_nm: str) -> dict:
     def helper(node: ast.AST) -> dict:
         ...
 
-    imported_aliases = {}  # sure, they could do `collections.Counter = list` later on, but we assume the stubs are in good faith. this is necessary because
-    # they cause circular imports otherwise :sadgecry:
-
+    # why deepcopy? a shallow copy could work, but might as well make it deep tbh.
+    _aliases = deepcopy(__builtins__.__dict__)  # sure, they could do `collections.Counter = list` later on, but we assume the stubs are in good faith.
+    # this is
+    # necessary because they cause circular imports otherwise :sadgecry:
 
     # no need to handle nested classes and functions. should only handle top-level classes, top-level functions, and functions inside classes. anything else
     # is just smelly.
+
+    print(st['int'].child_nodes['__new__'].ast.definitions[0].args.args[0].annotation.__dict__)
+
+    exit()
     for identifier, data in st.items():
-        print(1, identifier, data)
+        # print(1, identifier, data)
         if isinstance(data.ast, ImportedName):
             # note that `a = email; from a import charset` is illegal. thus, the following way is totes valid.
             mod_nm = '.'.join(data.ast.module_name)
@@ -452,19 +561,30 @@ def takein_module(module_nm: str) -> dict:
             # it'd be better to just write my own typeshed at that point. continue the `studs` project. ('studs' from 'stubs' but more pleasant to look at and
             # handle)
             if data.ast.name is None:
-                imported_aliases[data.ast.module_name[0]] = (mod_nm, '')
+                _aliases[data.ast.module_name[0]] = (mod_nm, '')
             else:
                 if is_mod(new_nm := f'{mod_nm}.{data.ast.name}'):
-                    imported_aliases[data.ast.name] = (new_nm, '')
+                    _aliases[data.ast.name] = (new_nm, '')
                 else:
-                    imported_aliases[data.ast.name] = (mod_nm, data.ast.name)
+                    _aliases[data.ast.name] = (mod_nm, data.ast.name)
 
         elif isinstance(data.ast, typed_ast._ast3.Assign):
-            ...
+            # print(type(data.ast.value), data.ast.value.__dict__)
+            if isinstance(data.ast.value, typed_ast._ast3.Subscript):
+                pass
+            elif isinstance(data.ast.value, typed_ast._ast3.Call):
+                if data.ast.value.func.id == 'TypeVar':
+                    print(data.ast.targets[0].id, data.ast.value.__dict__)
+                else:
+                    raise Exception(f"Expected `TypeVar`, but got another function ({data.ast.value.func.id}) call in an assignment.")
+            elif isinstance(data.ast.value, typed_ast._ast3.Name):
+                pass
+            # for target in data.ast.targets:
+            #     _aliases[target] = val
         # print(3, data.ast.value.func.__dict__)
         # exit(19)
 
-    print(f"{imported_aliases=}")
+    # print(f"{imported_aliases=}")
 
 
 # takein_module('email.charset')
