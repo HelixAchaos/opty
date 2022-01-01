@@ -7,7 +7,7 @@ import os
 from collections import deque, defaultdict
 from copy import deepcopy
 from types import FunctionType
-from typing import Optional, Any
+from typing import Optional
 from ast import Assign, AnnAssign, AugAssign, NamedExpr, NodeVisitor, AST, parse, Name, Tuple, Starred, ClassDef, FunctionDef, AsyncFunctionDef, DictComp, \
     ListComp, SetComp, Global, Nonlocal, comprehension, GeneratorExp, List
 
@@ -22,7 +22,7 @@ from typeshed_client import NameInfo, ImportedName
 from errors import ErrorDuringImport, TypeVarImmutabilityViolation
 
 types = {}
-modules = {}
+
 
 
 class AssignSniffer(NodeVisitor):
@@ -39,10 +39,10 @@ class AssignSniffer(NodeVisitor):
         self.locals = locals
         self.is_comp_gen = is_comp_gen
 
-    def generic_visit(self, node: AST) -> Any:
+    def generic_visit(self, node: AST) -> typing.Any:
         NodeVisitor.generic_visit(self, node)
 
-    def visit_Assign(self, node: Assign) -> Any:
+    def visit_Assign(self, node: Assign) -> typing.Any:
         if self.is_comp_gen:
             return None
         for target in node.targets:
@@ -60,35 +60,35 @@ class AssignSniffer(NodeVisitor):
                         queue.extend(elt.elts)
         self.visit(node.value)
 
-    def visit_AnnAssign(self, node: AnnAssign) -> Any:
+    def visit_AnnAssign(self, node: AnnAssign) -> typing.Any:
         if self.is_comp_gen:
             return None
         self.locals.add(node.target.id)
         self.visit(node.value)
 
-    def visit_AugAssign(self, node: AugAssign) -> Any:
+    def visit_AugAssign(self, node: AugAssign) -> typing.Any:
         if self.is_comp_gen:
             return None
         self.locals.add(node.target.id)
         self.visit(node.value)
 
-    def visit_NamedExpr(self, node: NamedExpr) -> Any:
+    def visit_NamedExpr(self, node: NamedExpr) -> typing.Any:
         self.locals.add(node.target.id)
         self.visit(node.value)
 
-    def visit_ClassDef(self, node: ClassDef) -> Any:
+    def visit_ClassDef(self, node: ClassDef) -> typing.Any:
         # class, so do nothing
         return None
 
-    def visit_FunctionDef(self, node: FunctionDef) -> Any:
+    def visit_FunctionDef(self, node: FunctionDef) -> typing.Any:
         # func, so do nothing
         return None
 
-    def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> Any:
+    def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> typing.Any:
         # func, so do nothing
         return None
 
-    def visit_ListComp(self, node: ListComp) -> Any:
+    def visit_ListComp(self, node: ListComp) -> typing.Any:
         # walrus
         self.visit(node.elt)
 
@@ -105,7 +105,7 @@ class AssignSniffer(NodeVisitor):
                     elif isinstance(elt, (Tuple, List)):
                         queue.extend(elt.elts)
 
-    def visit_SetComp(self, node: SetComp) -> Any:
+    def visit_SetComp(self, node: SetComp) -> typing.Any:
         # walrus
         self.visit(node.elt)
 
@@ -122,7 +122,7 @@ class AssignSniffer(NodeVisitor):
                     elif isinstance(elt, (Tuple, List)):
                         queue.extend(elt.elts)
 
-    def visit_GeneratorExp(self, node: GeneratorExp) -> Any:
+    def visit_GeneratorExp(self, node: GeneratorExp) -> typing.Any:
         # walrus
         self.visit(node.elt)
 
@@ -139,7 +139,7 @@ class AssignSniffer(NodeVisitor):
                     elif isinstance(elt, (Tuple, List)):
                         queue.extend(elt.elts)
 
-    def visit_DictComp(self, node: DictComp) -> Any:
+    def visit_DictComp(self, node: DictComp) -> typing.Any:
         # walrus
         # walrus
         self.visit(node.key)
@@ -170,24 +170,24 @@ class GlobalAndNonlocalSniffer(NodeVisitor):
         self.globals = globals
         self.nonlocals = nonlocals
 
-    def generic_visit(self, node: AST) -> Any:
+    def generic_visit(self, node: AST) -> typing.Any:
         NodeVisitor.generic_visit(self, node)
 
-    def visit_Global(self, node: Global) -> Any:
+    def visit_Global(self, node: Global) -> typing.Any:
         self.globals.update(node.names)
 
-    def visit_Nonlocal(self, node: Nonlocal) -> Any:
+    def visit_Nonlocal(self, node: Nonlocal) -> typing.Any:
         self.nonlocals.update(node.names)
 
-    def visit_ClassDef(self, node: ClassDef) -> Any:
+    def visit_ClassDef(self, node: ClassDef) -> typing.Any:
         # class, so do nothing
         return None
 
-    def visit_FunctionDef(self, node: FunctionDef) -> Any:
+    def visit_FunctionDef(self, node: FunctionDef) -> typing.Any:
         # func, so do nothing
         return None
 
-    def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> Any:
+    def visit_AsyncFunctionDef(self, node: AsyncFunctionDef) -> typing.Any:
         # func, so do nothing
         return None
 
@@ -196,10 +196,11 @@ NotFound = typing.TypeVar("NotFound")
 
 
 class TypeObject:
-    def __init__(self, name: Optional[str], bases: set[str]) -> None:
+    def __init__(self, name: Optional[str], bases: set[str], args: tuple['TypeObject'] = None) -> None:
         self.name = name
         self.data = {}
         self.bases: set[str] = bases  # not dict because the bases' definitions may be dependent on self.
+        self.args = (ANY, ) if args is None else args
         types[self.name] = self
 
     def __getitem__(self, item: str) -> typing.Union['TypeObject', 'BaseObject']:
@@ -209,13 +210,17 @@ class TypeObject:
         self.data[key] = value
 
     def __lt__(self, superclass: 'TypeObject') -> bool:
+        if isinstance(superclass, _Any):
+            return True
         if isinstance(superclass, _Union):
             return any(self < arg for arg in superclass.args)
         elif isinstance(superclass, TypeObject):
-            return any(types[base] < superclass for base in self.bases)
+            if all(a <= superclass for a in self.args):
+                return any(types[base] <= superclass for base in self.bases)
+            return False
 
     def __eq__(self, other: 'TypeObject') -> bool:
-        if isinstance(other, _Union):
+        if isinstance(other, (_Union, _Any)):
             return False
         if self is other:
             return True
@@ -226,6 +231,9 @@ class TypeObject:
         return self == other or self < other
 
     def __or__(self, other: 'TypeObject') -> 'TypeObject':
+        if isinstance(other, _Any):
+            return ANY
+
         if isinstance(other, _Union):
             shared_names = self.data.keys() & other.data.keys()
             data = {name: self[name] | other[name] for name in shared_names}
@@ -237,6 +245,13 @@ class TypeObject:
                 shared_names = self.data.keys() & other.data.keys()
                 data = {name: self[name] | other[name] for name in shared_names}
                 return _Union(self, other, data=data)
+
+
+class _Any(TypeObject):
+    def __lt__(self, other):
+        return False
+
+ANY = _Any('Any', set(), ())  # third arg is to avoid circular
 
 
 def onion(args: tuple[TypeObject]) -> TypeObject:
@@ -270,6 +285,8 @@ class _Union(TypeObject):
         self.data[key] = value
 
     def __lt__(self, superclass: TypeObject) -> bool:
+        if isinstance(superclass, _Any):
+            return True
         return all(arg < superclass for arg in self.args)
         # if isinstance(superclass, _Union):
         #     return all(arg < superclass for arg in self.args)
@@ -277,7 +294,7 @@ class _Union(TypeObject):
         #     return all(arg < superclass for arg in self.args)
 
     def __eq__(self, other: TypeObject) -> bool:
-        if isinstance(other, _Union):
+        if isinstance(other, (_Union, _Any)):
             return False
         return self is other
 
@@ -285,6 +302,9 @@ class _Union(TypeObject):
         return self == other or self < other
 
     def __or__(self, other: TypeObject) -> '_Union':
+        if isinstance(other, _Any):
+            return ANY
+
         if self == other:
             return self
 
@@ -373,22 +393,29 @@ class Literal(TypeObject):
 
 
 @dataclasses.dataclass
-class arguments:
-    T = list[tuple[str, TypeObject]]
-    args: list[tuple[str, TypeObject]] = dataclasses.field(default_factory=list)
-    varargs: tuple[str, TypeObject] = dataclasses.field(default_factory=tuple)
-    kwonlyargs: list[tuple[str, TypeObject]] = dataclasses.field(default_factory=list)
-    kwonlydefaults: list[tuple[str, TypeObject]] = dataclasses.field(default_factory=list)
-    varkw: tuple[str, TypeObject] = dataclasses.field(default_factory=tuple)
-    defaults: list[tuple[str, TypeObject]] = dataclasses.field(default_factory=list)
+class argument:
+    name: str
+    _type: TypeObject
 
-    def __init__(self, args: T, varargs: tuple[str, TypeObject], kwonlyargs: T, kwonlydefaults: T, varkw: tuple[str, TypeObject], defaults: T) -> None:
-        self.args = [] if args is None else args
-        self.varargs = () if args is None else varargs
-        self.kwonlyargs = [] if args is None else kwonlyargs
-        self.kwonlydefaults = [] if args is None else kwonlydefaults
-        self.varkw = () if args is None else varkw
-        self.defaults = [] if args is None else defaults
+
+@dataclasses.dataclass
+class arguments:
+    # posonlyargs  # not needed rn.
+    args: tuple[argument] = dataclasses.field(default_factory=tuple)
+    varargs: Optional[argument] = dataclasses.field(default_factory=None)
+    kwonlyargs: tuple[argument] = dataclasses.field(default_factory=tuple)
+    kwonlydefaults: tuple[TypeObject] = dataclasses.field(default_factory=tuple)
+    varkw: Optional[argument] = dataclasses.field(default_factory=None)
+    defaults: tuple[TypeObject] = dataclasses.field(default_factory=tuple)
+
+    def __init__(self, args: tuple[argument], varargs: argument, kwonlyargs: tuple[argument], kwonlydefaults: tuple[TypeObject], varkw: argument,
+                 defaults: tuple[TypeObject]) -> None:
+        self.args = () if args is None else tuple(args)
+        self.varargs = varargs
+        self.kwonlyargs = () if args is None else kwonlyargs
+        self.kwonlydefaults = () if args is None else kwonlydefaults
+        self.varkw = varkw
+        self.defaults = () if args is None else defaults
 
     def __iter__(self):
         for field in dataclasses.fields(self):
@@ -436,54 +463,36 @@ class Function(BaseObject):
 
         if self.is_overloaded:
             for overloaded_func_candidate in self.annotations:  # the more specific args_annotations should be first
-                failed = False
-                (args, varargs, kwonlyargs, kwonlydefaults, varkw, defaults), ann_ret = overloaded_func_candidate
-                a_iter = iter(argumes)
-                args = iter(args)
-                for a, b in zip(a_iter, args):
-                    if a != b:
-                        failed = True
-                        break
-                if failed:
+                (args, varargs, kwonlyargs, kwonlydefaults, varkw, defaults), ret = overloaded_func_candidate
+                # posonly may be supported later, but typeshed doesn't really use them.
+
+                a_list = [arg.name for arg in args[:len(args) - len(defaults)]]
+                for a, d in zip(args[len(args) - len(defaults):], defaults):
+                    a_list.append(f"{a}={d}")
+                if varargs is not None:
+                    a_list.append(f"*{varargs.name}")
+
+                k_list = [kwa.name for kwa in kwonlyargs[:len(kwonlyargs) - len(kwonlydefaults)]]
+                for ka, kd in zip(kwonlyargs[len(kwonlyargs) - len(kwonlydefaults):], kwonlydefaults):
+                    k_list.append(f"{ka}={kd}")
+                if varkw is not None:
+                    k_list.append(f"**{varkw.name}")
+
+                names = [arg.name for arg in args] + ([] if varargs is None else [varargs]) + [kwa.name for kwa in kwonlyargs] + ([] if varkw is None else
+                                                                                                                                  [varkw])
+                func_code = "lambda " + ','.join(a_list + k_list) + ':' + ' and '.join(f"name._type < {name._type}" for name in names)
+                print(func_code)
+
+                func = eval(func_code)
+                try:
+                    type_check = func(*argumes, **keygumes)
+                except TypeError:
                     continue
-                args = list(args)
-                if len(args) > 0:
-                    if any(varargs[0][1] != t for t in args):
+                else:
+                    if type_check:
+                       return ret
+                    else:
                         continue
-
-                k_iter = iter(keygumes)
-                kwargs = kwargs.items()
-
-
-
-
-
-                b = next(varargs)
-                for a in a_iter:
-                    if a != b:
-                        failed = True
-                        break
-                if failed:
-                    continue
-
-                k_iter = iter(keywords)
-                # kwonlyargs
-                for a, b in zip(k_iter, next(ann_argumes)):
-                    if a != b:
-                        failed = True
-                        break
-                if failed:
-                    continue
-                # varkw
-                for a, b in zip(k_iter, next(ann_argumes)):
-                    if a != b:
-                        failed = True
-                        break
-                if failed:
-                    continue
-
-
-                return ann_ret
 
             if len(self.annotations) == 0:
                 return Exception(f"Overloaded function has an empty `annotations` field ")
@@ -506,9 +515,11 @@ class Module(BaseObject):
     def __getitem__(self, item: str) -> TypeObject | BaseObject:
         if not self.is_imported:
             self._import()
+
+        # consider `__init__.pyi` too.
         return super().__getitem__(item)
 
-
+modules: [str, Module] = {}
 ts_base_path = Path(inspect.getfile(typeshed_client)).parent / 'typeshed'
 
 
@@ -532,22 +543,49 @@ def takein_module(module_nm: str) -> dict:
     st = typeshed_client.parser.get_stub_names(module_nm)
     result = {}
 
-    def helper(node: ast.AST) -> dict:
-        ...
-
     # why deepcopy? a shallow copy could work, but might as well make it deep tbh.
-    _aliases = deepcopy(__builtins__.__dict__)  # sure, they could do `collections.Counter = list` later on, but we assume the stubs are in good faith.
+    defaults = {'types.FunctionType': TypeObject('types.FunctionType', set()),
+                'types.ModuleType': TypeObject('types.ModuleType', set())}
+    _aliases: dict[str, TypeObject | Module] = defaults | {}  # sure, they could do `collections.Counter = list` later on, but we assume the
+    # stubs are in good faith.
     # this is
     # necessary because they cause circular imports otherwise :sadgecry:
+
+    def get(x):
+        if x in result:
+            return result[x]
+        elif x in _aliases:
+            a = _aliases[x]
+            if is_mod(nm:='.'.join(a)):
+                modules[nm] = Module(nm)
+                return modules[nm]
+            else:
+                modules[a[0]] = Module(a[0])
+                return modules[a[0]][a[1]]
+
+    def helper(c: ast.AST) -> TypeObject:
+        if isinstance(c, typed_ast._ast3.Name):
+            return helper(c.id)
+        elif isinstance(c, typed_ast._ast3.Subscript):
+            print(7, a:=helper(c.value.id))
+            return a[helper(c.slice.value)]
+        elif isinstance(c, typed_ast._ast3.Tuple):
+            return tuple(helper(elt) for elt in c.elts)
+        elif isinstance(c, typed_ast._ast3.BinOp):
+            return helper(c.left) | helper(c.right)
+        elif isinstance(c, typed_ast._ast3.Num):
+            return c.n
+        elif isinstance(c, str):
+            return get(c)
+        elif isinstance(c, tuple):
+            return get(c)
+        print(c)
 
     # no need to handle nested classes and functions. should only handle top-level classes, top-level functions, and functions inside classes. anything else
     # is just smelly.
 
-    print(st['int'].child_nodes['__new__'].ast.definitions[0].args.args[0].annotation.__dict__)
-
-    exit()
     for identifier, data in st.items():
-        # print(1, identifier, data)
+        print(1, identifier, data)
         if isinstance(data.ast, ImportedName):
             # note that `a = email; from a import charset` is illegal. thus, the following way is totes valid.
             mod_nm = '.'.join(data.ast.module_name)
@@ -555,8 +593,7 @@ def takein_module(module_nm: str) -> dict:
                 pass
                 # module = modules[mod_nm]
             else:
-                module = Module(mod_nm)
-                modules[mod_nm] = module
+                modules[mod_nm] = Module(mod_nm)
             # not storing in `result` bc of circular imports. also, importing an imported variable is just a code smell. if this later causes an issue,
             # it'd be better to just write my own typeshed at that point. continue the `studs` project. ('studs' from 'stubs' but more pleasant to look at and
             # handle)
@@ -570,12 +607,18 @@ def takein_module(module_nm: str) -> dict:
 
         elif isinstance(data.ast, typed_ast._ast3.Assign):
             # print(type(data.ast.value), data.ast.value.__dict__)
+
             if isinstance(data.ast.value, typed_ast._ast3.Subscript):
-                pass
+                val = helper(data.ast.value)
+                for target in data.ast.targets:
+                    result[target] = val
+                print(data.ast.__dict__)
             elif isinstance(data.ast.value, typed_ast._ast3.Call):
                 if data.ast.value.func.id == 'TypeVar':
-                    print(data.ast.targets[0].id, data.ast.value.__dict__)
+                    for target in data.ast.targets:
+                        _aliases[target.id] = TypeV(data.ast.value.args[0].s)
                 else:
+                    print(3, data.ast.targets[0].id)
                     raise Exception(f"Expected `TypeVar`, but got another function ({data.ast.value.func.id}) call in an assignment.")
             elif isinstance(data.ast.value, typed_ast._ast3.Name):
                 pass
@@ -697,7 +740,7 @@ class Scope:
                     print(mod_nm, nm)
                 elif isinstance(data.ast, typed_ast._ast3.Assign):
                     print(data.ast.__dict__)
-                    exit(19)
+
 
     def _from_import(self, _from: str, module_name: str) -> None:
         self.locals.add(module_name)

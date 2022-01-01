@@ -29,15 +29,15 @@ filter(a, b) -> (c for b if a(c)) => a:Callable,b:Sequence
 list(a) -> [a] => a:GeneratorExp
 set(a) -> {a} => a:GeneratorExp
 
-str(a) + 'b' -> f'{a}b' => a:Identifier,b:str
+str(a) + 'b' -> f'{a}b' => a:Any,b:str
 f'a={a}' -> f'{a=}' => a:Identifier
 
 print(str(a)) -> print(a) => a:Any
 
 # a[b:len(a)] -> a[b:] => a:Sequence,b:int
 # a[0:b] -> a[:b] => a:Sequence,b:int
-# a[b:c:1] -> a[b:c] => a:Sequence,b:int
+# a[b:c:1] -> a[b:c] => a:Sequence  # b:int,c:int
 # a[:len(b)
 
-# Immutable(a) -> a => a:Immutable // I would do this, but a) sometimes the code uses `is` and b) definining a type_short for Immutable would be a long project
+# Immutable(a) -> a => a:Immutable // I would do this, but a) sometimes the code uses `is` and b) defining a type_short for Immutable would be a long project
 #    map(str, ["foo", "bar"])
